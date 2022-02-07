@@ -1,6 +1,6 @@
 # avalon-sitemap
 
-Python 3 Flask application to generate and serve a sitemap.xml file for the Avalon public interface using the Avalon API.
+Python 3 Flask application to generate and serve a sitemap.xml file for the Avalon public interface using the Avalon Solr index.
 
 ## Requires
 
@@ -26,8 +26,8 @@ flask run
 ### Running in Docker
 
 ```bash
-docker build -t aspace-sitemap .
-docker run -it --rm -p 5000:5000 --env-file=.env --read-only aspace-sitemap
+docker build -t avalon-sitemap .
+docker run -it --rm -p 5000:5000 --env-file=.env --read-only avalon-sitemap
 ```
 
 ### Endpoints

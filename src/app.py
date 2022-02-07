@@ -11,21 +11,20 @@ from flask import Flask, Response
 from flask_compress import Compress
 
 # Generate and serve a sitemap.xml file for Avalon public interface
-# using the the Avalon API
+# using the the Avalon Solr index.
 
 # Add any environment variables from .env
 load_dotenv('../.env')
 
 # Get environment variables
 env = {}
-for key in ('AVALON_PUBLIC_URL', 'AVALON_API_URL', 'AVALON_API_TOKEN'):
+for key in ('AVALON_PUBLIC_URL', 'AVALON_SOLR_URL'):
     env[key] = os.environ.get(key)
     if env[key] is None:
         raise RuntimeError(f'Must provide environment variable: {key}')
 
 public_url = furl.furl(env['AVALON_PUBLIC_URL'])
-api_url = furl.furl(env['AVALON_API_URL'])
-token = env['AVALON_API_TOKEN']
+solr_url = furl.furl(env['AVALON_SOLR_URL'])
 debug = os.environ.get('FLASK_ENV') == 'development'
 
 
@@ -38,18 +37,15 @@ def generate_sitemap():
     if debug:
         logger.setLevel(logging.DEBUG)
 
-        # from http.client import HTTPConnection
-        # HTTPConnection.debuglevel = 1
-        # requests_log = logging.getLogger("requests.packages.urllib3")
-        # requests_log.setLevel(logging.DEBUG)
-        # requests_log.propagate = True
+        from http.client import HTTPConnection
+        HTTPConnection.debuglevel = 1
+        requests_log = logging.getLogger("requests.packages.urllib3")
+        requests_log.setLevel(logging.DEBUG)
+        requests_log.propagate = True
     else:
         logger.setLevel(logging.INFO)
 
     logger.info("Begin generating sitemap.xml")
-
-    headers = {'Avalon-Api-Key': env['AVALON_API_TOKEN']}
-    print(headers)
 
     # Start the xml output
     NS = 'http://www.sitemaps.org/schemas/sitemap/0.9'
@@ -62,70 +58,75 @@ def generate_sitemap():
     # Add the homepage
     url = et.SubElement(urlset, et.QName(NS, 'url'))
     loc = et.SubElement(url, et.QName(NS, 'loc'))
-    loc.text = api_url.url
+    loc.text = public_url.url
     url.tail = '\n'
 
-    # Iterate over collections
-    collections_url = (api_url / 'admin' / 'collections.json').url
-    logger.debug(f'{collections_url=}')
+    # Setup the Solr query
+    search_url = (solr_url / 'solr' / 'avalon' / 'select').url
 
-    response = requests.get(collections_url, headers=headers, params={'per_page': '100', 'page': '1'})
-    # logger.debug(f'{response=}')
+    q = ' AND '.join([
+        "has_model_ssim:MediaObject", # is a media object
+        "avalon_publisher_ssi:*", # object is published
+        "hidden_bsi:false", # object is not hidden from search results
+    ])
 
-    collections = json.loads(response.text)
+    count = 0 # count of objects have we seen
+    rows = 100 # rows to page in single request
 
-    for collection in collections:
+    params = {
+        'q': q, # query
+        'fl': 'id,title_tesi,isMemberOfCollection_ssim', # field list to return for each object
+        'sort': 'system_create_dtsi asc', # sort in object creation order
+        'wt': 'json', # response format JSON
+        'start': count, # return results starting at this row
+        'rows': rows, # number of rows to page
+    }
 
-        # Determine if this collection has any published objects
-        if collection['object_count']['published'] > 0:
+    collections = set() # track collections we have seen already
 
-            # Add this collection
-            collection_id = collection['id']
-            collection_name = collection['name']
+    # Iterate over all response objects
+    while True:
 
-            logger.debug(f'Adding {collection_id=} {collection_name=}')
+        response = requests.get(search_url, params=params)
+
+        data = json.loads(response.text)
+
+        # Iterate over objects in this response
+        for object in data['response']['docs']:
+
+            object_id = object['id']
+            object_title = object['title_tesi']
+
+            # Iterate over the collection ids
+            for collection_id in object['isMemberOfCollection_ssim']:
+
+                if collection_id not in collections:
+
+                    # This is the first time seeing this collection
+                    logger.debug(f'Adding {collection_id=}')
+
+                    url = et.SubElement(urlset, et.QName(NS, 'url'))
+                    loc = et.SubElement(url, et.QName(NS, 'loc'))
+                    loc.text = (public_url / 'collections' / collection_id).url
+                    url.tail = '\n'
+
+                    collections.add(collection_id)
+
+            logger.debug(f'Adding {object_id=} {object_title=}')
 
             url = et.SubElement(urlset, et.QName(NS, 'url'))
             loc = et.SubElement(url, et.QName(NS, 'loc'))
-            loc.text = (public_url / 'collections' / collection_id).url
+            loc.text = (public_url / 'media_objects' / object_id).url
             url.tail = '\n'
 
-            # Iterate over objects in this collection
-            page = 1
-            per_page = 100
+            count += 1
 
-            objects_url = (api_url / 'admin' / 'collections' / collection_id / 'items.json').url
-            logger.debug(f'{objects_url=}')
+        total = int(data['response']['numFound'])
 
-            # Continue requesting pages until we are returned fewer than per_page
-            # number of objects
-            while True:
+        if count >= total:
+            break
 
-                response = requests.get(objects_url,
-                                        headers=headers,
-                                        params={'per_page': per_page, 'page': page})
-
-                objects = json.loads(response.text)
-
-                # Iterate over this page of objects
-                for object_id, object  in objects.items():
-
-                    # Check if this object is published
-                    if object['published']:
-
-                        # Add this object
-                        object_title = object['title']
-                        logger.debug(f'Adding {object_id=} {object_title=}')
-
-                        url = et.SubElement(urlset, et.QName(NS, 'url'))
-                        loc = et.SubElement(url, et.QName(NS, 'loc'))
-                        loc.text = (public_url / 'media_objects' / object_id).url
-                        url.tail = '\n'
-
-                if len(objects) < per_page:
-                    break
-
-                page += 1
+        params['start'] = count
 
     logger.info("sitemap.xml generation complete")
 
