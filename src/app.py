@@ -13,6 +13,11 @@ from flask_compress import Compress
 # Generate and serve a sitemap.xml file for Avalon public interface
 # using the the Avalon Solr index.
 
+# Configure logging
+logging.basicConfig(format='%(asctime)s [%(levelname)-8s] %(message)s',
+                    level=logging.INFO,
+                    datefmt='%Y-%m-%d %H:%M:%S')
+
 # Add any environment variables from .env
 load_dotenv('../.env')
 
@@ -33,7 +38,6 @@ def generate_sitemap():
 
     logger = logging.getLogger('sitemap')
 
-    logger.addHandler(logging.StreamHandler())
     if debug:
         logger.setLevel(logging.DEBUG)
 
@@ -42,8 +46,6 @@ def generate_sitemap():
         requests_log = logging.getLogger("requests.packages.urllib3")
         requests_log.setLevel(logging.DEBUG)
         requests_log.propagate = True
-    else:
-        logger.setLevel(logging.INFO)
 
     logger.info("Begin generating sitemap.xml")
 
@@ -86,8 +88,14 @@ def generate_sitemap():
 
     # Iterate over all response objects
     while True:
+        try:
+            response = requests.get(search_url, params=params)
+        except Exception as err:
+            logger.error(f'Error submitting Solr query: url={search_url}, params={params}\n{err}')
+            raise err
 
-        response = requests.get(search_url, params=params)
+        if response.status_code != 200:
+            raise Exception(f'Received {response.status_code} for Solr query: url={search_url}, params={params}')
 
         data = json.loads(response.text)
 
@@ -122,6 +130,8 @@ def generate_sitemap():
             count += 1
 
         total = int(data['response']['numFound'])
+
+        logger.info(f'Retrieved {count=} out of {total=}')
 
         if count >= total:
             break
