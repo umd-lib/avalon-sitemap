@@ -1,4 +1,4 @@
-FROM python:3
+FROM python:3.13-trixie
 
 LABEL MAINTAINER SSDR "lib-ssdr@umd.edu"
 
