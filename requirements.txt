@@ -3,3 +3,5 @@ Flask_Compress==1.10.1
 furl==2.1.3
 python-dotenv==0.19.2
 requests==2.26.0
+Werkzeug==2.0.3
+certifi>=2026.10.19
